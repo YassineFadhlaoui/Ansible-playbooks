@@ -1,0 +1,232 @@
+- name: Nagios installation playbook
+  hosts: nagios
+  vars:
+      home_dir: YOUR_HOME_DIR
+      nagios: YOUR_HOME_DIR/nagios-4.3.4
+      nagios_plugins: nagios-plugins-2.2.1
+      nagios_password: ********
+      contact_mail: yassinefadhlaoui93@gmail.com
+
+  tasks:
+    - name: updating cache and installing python softwareproperties
+      apt: name=python-software-properties state=present update-cache=yes
+      become: yes
+
+    - name: adding php7 repository to the repositories list
+      shell: add-apt-repository ppa:ondrej/php -y
+      become: yes
+
+
+    - name: installing apache2
+      apt: name=apache2 state=present
+      become: yes
+
+    - name: installing libapache2-mod-php
+      apt: name=libapache2-mod-php state=present force=yes update-cache=yes
+      become: yes
+
+    - name: installing apache2-utils
+      apt: name=apache2-utils force=yes state=present
+      become: yes
+
+    - name: installing php7.0-mcrypt
+      apt: name=php7.0-mcrypt force=yes state=present
+      become: yes
+
+    - name: installing unzip
+      apt: name=unzip state=present
+      become: yes
+
+    - name: installing php7.0
+      apt: name=php7.0 force=yes state=present
+      become: yes
+
+    - name: installing php-mysql
+      apt: name=php-mysql force=yes state=present
+      become: yes
+
+    - name: installing libgd2-xpm-dev
+      apt: name=libgd2-xpm-dev force=yes state=present
+      become: yes
+
+    - name: installing MySQL Server
+      apt: name=mysql-server force=yes state=present
+      become: yes
+
+    - name: installing build-essential
+      apt: name=build-essential state=present
+      become: yes
+
+    - name: download core package
+      get_url:
+        url: https://assets.nagios.com/downloads/nagioscore/releases/nagios-4.3.4.tar.gz?__hstc=118811158.bffc20889dac26b2df4499c11b31eff8.1528827727631.1528827727631.1528827727631.1&__hssc=118811158.2.1528827727631&__hsfp=1876450687#_ga=2.224337560.2014885888.1528827726-960334740.1528827726
+        dest: "{{ home_dir }}"
+        
+  
+    - name: downloas plugins
+      get_url:
+        url: https://nagios-plugins.org/download/nagios-plugins-2.2.1.tar.gz#_ga=2.32287805.2014885888.1528827726-960334740.1528827726
+        dest: "{{ home_dir }}"
+
+    - name: adding nagios user
+      user:
+          name: nagios
+          state: present
+      become: yes
+   
+    - name: adding nagios group
+      group:
+           name: nagcmd
+           state: present
+
+      become: yes
+
+    - name: adding nagios user to nagios group
+      user:
+          name: nagios
+          groups: nagcmd
+      become: yes
+
+    - name: adding nagios to www-data
+      user:
+          name: www-data
+          groups: nagcmd
+          append: yes
+      become: yes
+
+    - name: unarchiving nagios core
+      unarchive:
+         src: "{{ home_dir }}/nagios-4.3.4.tar.gz"
+         dest: "{{ home_dir }}"
+         copy: no
+        
+    - name: unarchiving nagios plugins
+      unarchive:
+         src: "{{ home_dir }}/nagios-plugins-2.2.1.tar.gz"
+         dest: "{{ home_dir }}"
+         copy: no
+
+    - name: make nagios core
+      command: chdir="{{ home_dir }}/nagios-4.3.4" ./configure --with-command-group=nagcmd
+      become: yes
+
+    - name: make all 
+      command: chdir="{{ home_dir }}/nagios-4.3.4" make all
+      become: yes
+
+    - name: make install
+      command: chdir="{{ home_dir }}/nagios-4.3.4" make install
+      become: yes
+
+    - name: make install-init
+      command: chdir="{{ home_dir }}/nagios-4.3.4" make install-init
+      become: yes
+
+    - name: make install config
+      command: chdir="{{ home_dir }}/nagios-4.3.4" make install-config
+      become: yes
+    
+    - name: make install-commandemode
+      command: chdir="{{ home_dir }}/nagios-4.3.4" make install-commandmode 
+      become: yes
+      
+    - name: installing web interface for nagios
+      command: chdir="{{ home_dir }}/nagios-4.3.4"  make install-webconf
+      become: yes
+
+    - name: creating nagios account to be able to login to the web interface
+      shell: htpasswd -b -c /usr/local/nagios/etc/htpasswd.users nagiosadmin "{{ nagios_password }}"
+      become: yes
+
+    - name: restarting Apache2
+      service:
+             name: apache2
+             state: restarted
+      become: yes
+
+    - name: compiling nagios-plugins
+      command: chdir="{{ home_dir }}/{{ nagios_plugins }}" ./configure --with-nagios-user=nagios --with-nagios-group=nagios
+      become: yes
+
+    - name: compiling plugins
+      command: chdir="{{ home_dir }}/{{ nagios_plugins }}" make
+      become: yes 
+
+    - name: installing plugins
+      command: chdir="{{ home_dir }}/{{ nagios_plugins }}" make install
+      become: yes
+
+    - name: adding contact mail
+      lineinfile:
+              path: /usr/local/nagios/etc/objects/contacts.cfg
+              regexp: '^        email'
+              backrefs: yes
+              line: '        email                  {{ contact_mail  }}'
+      become: yes
+
+    - name: configuring apache 1/5
+      lineinfile:
+                path: /etc/apache2/sites-enabled/nagios.conf
+                regexp: '^     Order allow,deny'
+                backrefs: yes
+                line: '#       Order allow,deny'
+      become: yes
+   
+    - name: configuring apache 2/5
+      lineinfile:
+                path: /etc/apache2/sites-enabled/nagios.conf
+                regexp: '^      Allow from all'
+                backrefs: yes
+                line: '#     Allow from all'
+      become: yes
+
+    - name: configuring apache 3/5
+      lineinfile:
+                path: /etc/apache2/sites-enabled/nagios.conf
+                regexp: '^#     Order deny,allow'
+                backrefs: yes
+                line: '     Order deny,allow'
+      become: yes
+   
+    - name: configuring apache 4/5
+      lineinfile:
+                path: /etc/apache2/sites-enabled/nagios.conf
+                regexp: '^#     Deny from all'
+                backrefs: yes
+                line: '     Deny from all'
+      become: yes                   
+
+    - name: configuring apache 5/5
+      lineinfile:
+                path: /etc/apache2/sites-enabled/nagios.conf
+                regexp: '^#     Allow from 127.0.0.1'
+                backrefs: yes
+                line: '     Allow from 127.0.0.1 192.168.178.0/24'
+      become: yes
+
+    - name: enabling rewriting modules 1/2
+      shell: a2enmod rewrite
+      become: yes
+
+    - name: enabling rewriting modules 2/2
+      shell: a2enmod cgi
+      become: yes
+
+    - name: restarting apache daemon
+      service:
+             name: apache2
+             state: restarted
+      become: yes
+           
+    - name: enabling nagios
+      file:
+          src: /etc/init.d/nagios
+          dest: /etc/rcS.d/S99nagios
+          state: link
+      become: yes
+
+    - name: starting nagios
+      service: 
+             name: nagios
+             state: restarted
+      become: yes
