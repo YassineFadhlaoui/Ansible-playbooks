@@ -1,5 +1,7 @@
 # Nagios installer playbook
 
+> Install Nagios without the need to connecting or troubleshooting anything just run the playbook 
+
 Playbook to install nagios core on a ubuntu machine
 
 ## How to run the playbook:
