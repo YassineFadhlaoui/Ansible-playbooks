@@ -1,0 +1,24 @@
+- name: JAVA installation playbook
+  hosts: nagios
+  vars:
+      home_dir: /home/yassine
+      java_package: jdk-8u171-linux-x64.tar.gz
+      java_dir: jdk1.8.0_171      
+  tasks:
+       - name: Downloading JAVA oracle package
+         get_url:
+                url: http://download.oracle.com/otn-pub/java/jdk/8u171-b11/512cd62ec5174c3487ac17c61aaa89e8/jdk-8u171-linux-x64.tar.gz
+                headers: "Cookie: oraclelicense=accept-securebackup-cookie"
+                validate_certs: no
+                dest: "{{ home_dir }}"
+
+       - name: Unarchiving "{{ java_package  }}"
+         unarchive: 
+                  src: "{{ home_dir }}/{{ java_package }}"
+                  dest: "{{ home_dir }}"
+                  copy: no
+
+       - name: Telling the system about the new java installation
+         shell: update-alternatives --install "/usr/bin/java" "java" "{{ home_dir }}/{{ java_dir }}/bin/java" 1
+         become: yes
+
