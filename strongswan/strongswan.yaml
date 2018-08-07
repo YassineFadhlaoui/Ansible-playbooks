@@ -1,0 +1,224 @@
+- name: installation script
+  hosts: tag_vpn_vpn
+  vars:
+      GENERIC_CONF: /home/ubuntu/aws/ipsec.conf
+      INSTALLATION_DIR: /home/ubuntu/strongswan
+      CERTS_DIR: "/home/ubuntu/strongswan/certs"
+      ROOT_KEY_SERVER_NAME: key_server.pem
+      CA_CERT_NAME: server-root-ca.pem
+      SERVER_PRIVATE_KEY_NAME: vpn-private-key.pem
+      GATEWAY_NAME: servername.compute.amazonaws.com
+      GATEWAY_CERTIFICATE_NAME: vpn-server-cert.pem
+      STRONGSWAN_CERTS_FOLDER: /etc/ipsec.d/certs
+      STRONGSWAN_KEYS_FOLDER: /etc/ipsec.d/private
+      USER1: server1
+      USER2: server2
+      PASSWORD1: password1
+      PASSWORD2: password2
+
+
+  tasks:
+    - name:  updating repositories and installing software properties common
+      apt: name=software-properties-common state=present update-cache=yes
+      become: yes
+
+    - name: Creating temprorary workspace for strongswan
+      file: path="{{ INSTALLATION_DIR }}" state=directory
+
+    - name: Installing Strongswan dependencies
+      apt: name=moreutils state=present
+      become: yes
+
+    - name: Installing Strongswan
+      apt: name="{{ item }}" state=present
+      with_items:
+        - strongswan
+        - strongswan-plugin-eap-mschapv2
+      become: yes
+
+    - name: create folder to yield creted certificates
+      file: path="{{ INSTALLATION_DIR }}/certs" state=directory
+
+    - name: create RSA 4096 key
+      shell:  ipsec pki --gen --type rsa --size 4096 --outform pem > "{{ CERTS_DIR}}/{{ROOT_KEY_SERVER_NAME}}"
+
+    - name: protecting key file
+      file:
+           path: "{{ CERTS_DIR}}/{{ROOT_KEY_SERVER_NAME}}"
+           mode: 0600
+
+    - name: generating certificate authority and signing it
+      shell:  ipsec pki --self --ca --lifetime 3650 --in "{{ CERTS_DIR}}/{{ROOT_KEY_SERVER_NAME}}" --type rsa --dn "C=DE, O=Strongswan Gateway, CN=Strongswn Root CA" --outform pem > "{{ CERTS_DIR}}/{{CA_CERT_NAME}}"
+
+    - name: Generate a private  key for the vpn server
+      shell: ipsec pki --gen --type rsa --size 4096 --outform pem > "{{ CERTS_DIR}}/{{SERVER_PRIVATE_KEY_NAME}}"
+
+    - name: protecting key file
+      file:
+           path: "{{ CERTS_DIR}}/{{SERVER_PRIVATE_KEY_NAME}}"
+           mode: 0600
+
+    - name: Generate the VPN server certificate
+      shell:  ipsec pki --pub --in "{{ CERTS_DIR}}/{{SERVER_PRIVATE_KEY_NAME}}"  --type rsa | ipsec pki --issue --lifetime 1825  --cacert "{{ CERTS_DIR}}/{{ CA_CERT_NAME }}"  --cakey "{{ CERTS_DIR}}/{{ROOT_KEY_SERVER_NAME}}"  --dn "C=DE, O=Strongswan Gateway, CN={{GATEWAY_NAME}}"  --san "{{GATEWAY_NAME}}"  --flag serverAuth --flag ikeIntermediate  --outform pem > "{{CERTS_DIR}}/{{GATEWAY_CERTIFICATE_NAME}}"
+
+    - name: Copying SERVER PRIVATE KEY to Strongswan installation folder
+      copy:
+        src: "{{CERTS_DIR}}/{{SERVER_PRIVATE_KEY_NAME}}"
+        dest: "{{STRONGSWAN_KEYS_FOLDER}}/{{SERVER_PRIVATE_KEY_NAME}}"
+        owner: root
+        group: root
+        mode: 0600
+        remote_src: yes
+      become: yes
+
+    - name: Copying certificate to Strongswan installation folder
+      copy:
+        src: "{{CERTS_DIR}}/{{GATEWAY_CERTIFICATE_NAME}}"
+        dest: "{{STRONGSWAN_CERTS_FOLDER}}/{{GATEWAY_CERTIFICATE_NAME}}"
+        remote_src: yes
+      become: yes
+# The installation was successful
+# Now we are going to automate the configuration part
+
+    - name: Copying generic ipsec.conf file to VPN server
+      copy:
+        src: "{{GENERIC_CONF}}"
+        dest: "/etc/ipsec.conf"
+      become: yes
+
+    - name: changing connection name
+      lineinfile:
+                path: /etc/ipsec.conf
+                regexp: '^conn connection_name'
+                backrefs: yes
+                line: 'conn EMS_Road_Warrior'
+      become: yes
+
+    - name: configuring ipsec deamon
+      lineinfile:
+                path: /etc/ipsec.conf
+                regexp: '^    leftid=@server_name'
+                backrefs: yes
+                line: "'    leftid=@{{GATEWAY_NAME}}'"
+      become: yes
+
+# configuring VPN Authentication
+    - name: verifying server key
+      shell: grep "RSA" /etc/ipsec.secrets
+      register: result
+      become: yes
+
+    - name: configuring VPN Authentication [1/3]
+      lineinfile:
+                path: /etc/ipsec.secrets
+                line: '{{GATEWAY_NAME}} : RSA "/etc/ipsec.d/private/{{SERVER_PRIVATE_KEY_NAME}}"'
+      become: yes
+      when: result.stdout != ""
+
+
+    - name: configuring VPN Authentication [2/3]
+      lineinfile:
+             path: /etc/ipsec.secrets
+             regexp: '{{USER1}} %any% : EAP "{{PASSWORD1}}"'
+             line: '{{USER1}} %any% : EAP "{{PASSWORD1}}"'
+      become: yes
+
+
+
+    - name: configuring VPN Authentication [3/3]
+      lineinfile:
+                path: /etc/ipsec.secrets
+                regexp: '{{USER2}} %any% : EAP "{{PASSWORD2}}"'
+                line: '{{USER2}} %any% : EAP "{{PASSWORD2}}"'
+      become: yes
+# configuration ended
+# reloading ipsec daemon
+    - name: Reloading ipsec daemon
+      shell: ipsec reload
+      become: yes
+
+# to do firewall
+    - name: Inserting ACCEPT rules in the system iptable
+      iptables:
+        chain: INPUT
+        policy: ACCEPT
+      become: yes
+
+    - name: Inserting forwarding rules in the system iptable
+      iptables:
+        chain: FORWARD
+        policy: ACCEPT
+      become: yes
+
+    - name: flushing the whole table
+      shell: iptables -F
+
+      become: yes
+
+    - name: adding ssh rule [1/2]
+      iptables:
+         action: append
+         chain: INPUT
+         ctstate: ['ESTABLISHED','RELATED']
+         policy: ACCEPT
+      become: yes
+
+    - name: adding ssh rule [2/2]
+      shell: iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+      become: yes
+
+    - name: accept connection on local interface
+      shell:  iptables -A INPUT -i lo -j ACCEPT
+      become: yes
+
+    - name: Accepting connections on port 500
+      shell: iptables -A INPUT -p udp --dport  500 -j ACCEPT
+      become: yes
+
+    - name: Accepting connections on port 4500
+      shell: iptables -A INPUT -p udp --dport 4500 -j ACCEPT
+      become: yes
+
+    - name: Adding forward rule for ESP (IN RULE)
+      shell: iptables -A FORWARD --match policy --pol ipsec --dir in  --proto esp -s 10.0.0.0/8 -j ACCEPT
+      become: yes
+
+    - name: Adding forward rule for ESP (OUT RULE)
+      shell: iptables -A FORWARD --match policy --pol ipsec --dir out --proto esp -d 10.0.0.0/8 -j ACCEPT
+      become: yes
+    - name: adding postrouting rule
+      shell: iptables -t nat -A POSTROUTING -s 10.0.0.0/8 -o eth0 -m policy --pol ipsec --dir out -j ACCEPT
+      become: yes
+
+    - name: adding masquerade rule
+      shell: iptables -t nat -A POSTROUTING -s 10.10.10.10/24 -o eth0 -j MASQUERADE
+      become: yes
+
+    - name: adding rule to reduce packet size
+      shell: iptables -t mangle -A FORWARD --match policy --pol ipsec --dir in -s 10.0.0.0/8 -o eth0 -p tcp -m tcp --tcp-flags SYN,RST SYN -m tcpmss --mss 1361:1536 -j TCPMSS --set-mss 1360
+      become: yes
+
+
+# disable ufw (uncomplicated firewall)
+    - name: disabling ufw
+      service:
+        name: ufw
+        enabled: false
+        state: stopped
+      become: yes
+
+    - name: configuring sysctl
+      lineinfile:
+                path: /etc/sysctl.conf
+                regexp: '#net.ipv4.ip_forward=1'
+                backrefs: yes
+                line: 'net.ipv4.ip_forward=1'
+      become: yes
+
+    - name: configuring sysctl
+      lineinfile:
+                path: /etc/sysctl.conf
+                regexp: '# net.ipv4.conf.all.secure_redirects = 1'
+                backrefs: yes
+                line: 'net.ipv4.conf.all.secure_redirects = 1'
+      become: yes
