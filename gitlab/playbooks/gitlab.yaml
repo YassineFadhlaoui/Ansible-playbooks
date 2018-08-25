@@ -1,0 +1,196 @@
+---
+  - name: install and configure gitlab with https and smtp support
+    hosts: gitlab
+    vars:
+      cert_generator_script: homeOfTheInventroy/keys/certgen.sh
+      cert_generator_script_on_master: /path/to/certgen.sh
+      cert_generator_script_name: certgen.sh
+      gitlab_link: path/to/local/gitlab/deb/file
+      https_link: https://192.168.100.107
+      gmail_user: **********@gmail.com
+      gmail_pass: **************
+
+    tasks:
+
+    - name: detecting Home directory
+      shell: echo $HOME
+      register: home_dir
+
+    - name: debug message
+      debug: msg="home directory is {{home_dir.stdout}}"
+
+    - name: create certificate directory
+      file:
+          path: "{{ home_dir.stdout }}/keys"
+          state: directory
+
+    - name: create empty script file
+      file:
+          path: "{{ cert_generator_script }}"
+          state: touch
+
+    - name: copy self signed certificate script gnerator
+      copy:
+          src: "{{ cert_generator_script_on_master }}"
+          dest: "{{ cert_generator_script }}"
+          mode: 0700
+
+    - name: generate self signed certificate
+      command: chdir="{{ home_dir.stdout }}/keys" sh "{{ cert_generator_script_name }}" creates="{{ home_dir.stdout }}/keys/key.pem"
+
+    - name: self-signed certificate creation result
+      debug: msg="a self signed certificate was successfully created"
+
+    - name: preparing to copy gitlab.deb file to inventory (preparing empty file)
+      file:
+        path: "{{ home_dir.stdout }}/gitlab.deb"
+        state: touch
+
+    - name: copy gitlab to host
+      copy:
+        src: "{{ gitlab_link }}"
+        dest: "{{ home_dir.stdout }}/gitlab.deb"
+        mode: 0700
+
+    - name: install gitlab deb package
+      apt:
+        deb: gitlab.deb
+      become: yes
+
+    - name: testing weather https is enabled or not
+      shell: grep '^nginx\["ssl_certificate"\]' /etc/gitlab/gitlab.rb | wc -l
+      register: isHttpsEnabled
+      become: yes
+
+    - name: adding https support [1/2]
+      lineinfile:
+               path: /etc/gitlab/gitlab.rb
+               line: 'nginx["ssl_certificate"] = "/etc/gitlab/ssl/cert.crt"'
+      when: isHttpsEnabled.stdout == "0"
+      become: yes
+
+    - name: adding https support [2/2]
+      lineinfile:
+               path: /etc/gitlab/gitlab.rb
+               line: 'nginx["ssl_certificate_key"] = "/etc/gitlab/ssl/key.pem"'
+      when: isHttpsEnabled.stdout == "0"
+      become: yes
+
+    - name: create directory for ssl certificate
+      file:
+          path: /etc/gitlab/ssl
+          mode: 0700
+          state: directory
+      become: yes
+
+    - name: prepare empty file containers
+      file:
+        path: "{{ item.dest }}"
+        state: touch
+        mode: 0600
+      with_items:
+        - { dest: '/etc/gitlab/ssl/key.pem' }
+        - { dest: '/etc/gitlab/ssl/cert.crt' }
+      become: yes
+
+    - name: copy key and self signed certificate to ssl directory
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: 0600
+        remote_src: yes
+      with_items:
+        - { src: '{{ home_dir.stdout }}/keys/key.pem', dest: '/etc/gitlab/ssl/key.pem' }
+        - { src: '{{ home_dir.stdout }}/keys/cert.crt', dest: '/etc/gitlab/ssl/cert.crt' }
+      become: yes
+
+    - name: changing gitlab daemon listening address to "{{ https_link }}"
+      lineinfile:
+               path: /etc/gitlab/gitlab.rb
+               regexp: "^external_url 'http://gitlab.example.com'"
+               backrefs: yes
+               line: "external_url '{{https_link}}'"
+      become: yes
+
+    - name: testing if SMTP is enabled
+      shell: grep '^nginx\["smtp_enable"\]' /etc/gitlab/gitlab.rb | wc -l
+      register: isSmtpEnabled
+      become: yes
+
+    - name: enabling SMTP
+      lineinfile:
+                path: /etc/gitlab/gitlab.rb
+                line: "gitlab_rails['smtp_enable'] = true"
+      when: isSmtpEnabled.stdout == "0"
+      become: yes
+
+    - name: adding gmail SMTP server address
+      lineinfile:
+                path: /etc/gitlab/gitlab.rb
+                line: 'gitlab_rails["smtp_address"] = "smtp.gmail.com"'
+      when: isSmtpEnabled.stdout == "0"
+      become: yes
+
+    - name: adding google SMTP server port
+      lineinfile:
+                path: /etc/gitlab/gitlab.rb
+                line: "gitlab_rails['smtp_port'] = 587"
+      when: isSmtpEnabled.stdout == "0"
+      become: yes
+
+    - name: adding gmail username
+      lineinfile:
+                path: /etc/gitlab/gitlab.rb
+                line: 'gitlab_rails["smtp_user_name"] = "{{ gmail_user }}"'
+      when: isSmtpEnabled.stdout == "0"
+      become: yes
+
+    - name: adding gmail account password
+      lineinfile:
+                path: /etc/gitlab/gitlab.rb
+                line: 'gitlab_rails["smtp_password"] = "{{ gmail_pass }}"'
+      when: isSmtpEnabled.stdout == "0"
+      become: yes
+
+    - name: adding SMTP domain
+      lineinfile:
+                path: /etc/gitlab/gitlab.rb
+                line: "gitlab_rails['smtp_domain'] = 'smtp.gmail.com'"
+      when: isSmtpEnabled.stdout == "0"
+      become: yes
+
+    - name: adding SMTP authentication method
+      lineinfile:
+                path: /etc/gitlab/gitlab.rb
+                line: "gitlab_rails['smtp_authentication'] = 'login'"
+      when: isSmtpEnabled.stdout == "0"
+      become: yes
+
+    - name: adding SMTP tls [1/2]
+      lineinfile:
+                path: /etc/gitlab/gitlab.rb
+                line: "gitlab_rails['smtp_enable_starttls_auto'] = true"
+      when: isSmtpEnabled.stdout == "0"
+      become: yes
+
+    - name: adding SMTP tls [2/2]
+      lineinfile:
+                path: /etc/gitlab/gitlab.rb
+                line: "gitlab_rails['smtp_tls'] = false"
+      when: isSmtpEnabled.stdout == "0"
+      become: yes
+
+    - name: defining openssl verify mode
+      lineinfile:
+                path: /etc/gitlab/gitlab.rb
+                line: "gitlab_rails['smtp_openssl_verify_mode'] = 'peer'"
+      when: isSmtpEnabled.stdout == "0"
+      become: yes
+
+    - name: reconfigure gitlab
+      shell: gitlab-ctl reconfigure
+      become: yes
+
+    - name: restart gitlab
+      shell: gitlab-ctl restart
+      become: yes
