@@ -1,15 +1,14 @@
 # Ansible-playbooks
-a collection of ansible palybooks that performs different tasks
+a collection of ansible palybooks that perform different tasks
 
 ## JAVA playbook
-Simple playbook that download the oracle JAVA and set it up
+Simple playbook that download the oracle JAVA and sets it up
 
 ## Nagios playbook
-A palybook that downloads nagios core and nagios plugins compile the code creates a nagios user and nagios group, install apache, php and other dependencie, then it set up nagios 
-
+A palybook that downloads nagios core and configures it
 ## strongswan
 
-A playbook that downloads, installs and configure the open source VPN software Strongswan
+A playbook that downloads, installs and configures the open source VPN software Strongswan
 
 ## gitlab
-A playbook that downloads, installs and set up a local gitlab server with SMTP and HTTPS support
+A playbook that downloads, installs and sets up a local gitlab server with SMTP and HTTPS support
